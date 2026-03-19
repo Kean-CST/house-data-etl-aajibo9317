@@ -112,7 +112,7 @@ def main() -> None:
     csv_path = str(
         ROOT
         / os.getenv("DATASET_DIR", "dataset")
-        / os.getenv("DATASET_FILE", "historical_purchases_2.csv")
+        / os.getenv("DATASET_FILE", "historical_purchases.csv")
     )
 
     spark = (
