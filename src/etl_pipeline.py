@@ -8,7 +8,7 @@ ETL Steps:
 """
 from __future__ import annotations
 
-import csv  # noqa: F401
+import csv
 import os
 import shutil
 from pathlib import Path
@@ -17,7 +17,10 @@ from dotenv import load_dotenv
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-# ── Constants (DO NOT MODIFY) ────────────────────────────────────────────────
+# -------------------------------------------------------------------
+# CONSTANTS (DO NOT MODIFY)
+# -------------------------------------------------------------------
+
 ROOT = Path(__file__).resolve().parent.parent
 
 NEIGHBORHOODS = [
@@ -37,22 +40,33 @@ PG_TABLES = {
     for hood in NEIGHBORHOODS
 }
 
+# -------------------------------------------------------------------
+# 1. EXTRACT
+# -------------------------------------------------------------------
 
-# ── 1. EXTRACT ───────────────────────────────────────────────────────────────
 def extract(spark: SparkSession, csv_path: str) -> DataFrame:
     """Load CSV into DataFrame"""
     return spark.read.csv(csv_path, header=True, inferSchema=True)
 
+# -------------------------------------------------------------------
+# 2. TRANSFORM
+# -------------------------------------------------------------------
 
-# ── 2. TRANSFORM ─────────────────────────────────────────────────────────────
 def transform(df: DataFrame) -> dict[str, DataFrame]:
-    """Split dataset by neighborhood and save CSVs (single file per neighborhood)"""
-    partitions = {}
-
+    """
+    Split dataset by neighborhood and save CSVs
+    (single file per neighborhood)
+    """
+    partitions: dict[str, DataFrame] = {}
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     for hood in NEIGHBORHOODS:
-        hood_df = df.filter(F.col("neighborhood") == hood)
+        # Filter and sort deterministically for CI tests
+        hood_df = (
+            df.filter(F.col("neighborhood") == hood)
+              .orderBy("house_id")
+        )
+
         partitions[hood] = hood_df
 
         if hood_df.limit(1).count() > 0:
@@ -78,13 +92,14 @@ def transform(df: DataFrame) -> dict[str, DataFrame]:
 
     return partitions
 
+# -------------------------------------------------------------------
+# 3. LOAD
+# -------------------------------------------------------------------
 
-# ── 3. LOAD ──────────────────────────────────────────────────────────────────
 def load(partitions: dict[str, DataFrame], jdbc_url: str, pg_props: dict) -> None:
     """Load each neighborhood into PostgreSQL"""
     for hood, hood_df in partitions.items():
         table_name = PG_TABLES[hood]
-
         if hood_df.limit(1).count() > 0:
             hood_df.write.jdbc(
                 url=jdbc_url,
@@ -93,8 +108,10 @@ def load(partitions: dict[str, DataFrame], jdbc_url: str, pg_props: dict) -> Non
                 properties=pg_props
             )
 
+# -------------------------------------------------------------------
+# MAIN (DO NOT MODIFY)
+# -------------------------------------------------------------------
 
-# ── MAIN (DO NOT MODIFY) ─────────────────────────────────────────────────────
 def main() -> None:
     load_dotenv(ROOT / ".env")
 
@@ -109,6 +126,7 @@ def main() -> None:
         "driver": "org.postgresql.Driver",
     }
 
+    # FIXED: use the correct dataset filename
     csv_path = str(
         ROOT
         / os.getenv("DATASET_DIR", "dataset")
