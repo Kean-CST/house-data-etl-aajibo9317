@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv  # noqa: F401
 import os
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,7 +28,7 @@ NEIGHBORHOODS = [
 OUTPUT_DIR = ROOT / "output" / "by_neighborhood"
 
 OUTPUT_FILES = {
-    hood: OUTPUT_DIR / f"{hood.replace(' ', '_').lower()}"
+    hood: OUTPUT_DIR / f"{hood.replace(' ', '_').lower()}.csv"
     for hood in NEIGHBORHOODS
 }
 
@@ -45,23 +46,35 @@ def extract(spark: SparkSession, csv_path: str) -> DataFrame:
 
 # ── 2. TRANSFORM ─────────────────────────────────────────────────────────────
 def transform(df: DataFrame) -> dict[str, DataFrame]:
-    """Split dataset by neighborhood and save CSVs"""
+    """Split dataset by neighborhood and save CSVs (single file per neighborhood)"""
     partitions = {}
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     for hood in NEIGHBORHOODS:
         hood_df = df.filter(F.col("neighborhood") == hood)
-
         partitions[hood] = hood_df
 
-        # Only write if data exists
         if hood_df.limit(1).count() > 0:
+            temp_dir = str(OUTPUT_FILES[hood]) + "_tmp"
+
+            # Write Spark output (folder)
             hood_df.coalesce(1).write.csv(
-                str(OUTPUT_FILES[hood]),
+                temp_dir,
                 header=True,
                 mode="overwrite"
             )
+
+            # Move the actual CSV file out of Spark folder
+            for file in os.listdir(temp_dir):
+                if file.startswith("part-") and file.endswith(".csv"):
+                    shutil.move(
+                        os.path.join(temp_dir, file),
+                        OUTPUT_FILES[hood]
+                    )
+
+            # Delete temp folder
+            shutil.rmtree(temp_dir)
 
     return partitions
 
