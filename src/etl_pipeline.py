@@ -8,7 +8,6 @@ ETL Steps:
 """
 from __future__ import annotations
 
-import csv
 import os
 import shutil
 from pathlib import Path
@@ -45,8 +44,10 @@ PG_TABLES = {
 # -------------------------------------------------------------------
 
 def extract(spark: SparkSession, csv_path: str) -> DataFrame:
-    """Load CSV into DataFrame"""
-    return spark.read.csv(csv_path, header=True, inferSchema=True)
+    """Load CSV into DataFrame and preserve original row order."""
+    df = spark.read.csv(csv_path, header=True, inferSchema=True)
+    df = df.withColumn("_row", F.monotonically_increasing_id())
+    return df
 
 # -------------------------------------------------------------------
 # 2. TRANSFORM
@@ -61,25 +62,23 @@ def transform(df: DataFrame) -> dict[str, DataFrame]:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     for hood in NEIGHBORHOODS:
-        # Filter and sort deterministically for CI tests
         hood_df = (
             df.filter(F.col("neighborhood") == hood)
-              .orderBy("house_id")
+              .orderBy("_row")
         )
 
+        hood_df = hood_df.drop("_row")
         partitions[hood] = hood_df
 
         if hood_df.limit(1).count() > 0:
             temp_dir = str(OUTPUT_FILES[hood]) + "_tmp"
 
-            # Write Spark output (folder)
             hood_df.coalesce(1).write.csv(
                 temp_dir,
                 header=True,
                 mode="overwrite"
             )
 
-            # Move the actual CSV file out of Spark folder
             for file in os.listdir(temp_dir):
                 if file.startswith("part-") and file.endswith(".csv"):
                     shutil.move(
@@ -87,7 +86,6 @@ def transform(df: DataFrame) -> dict[str, DataFrame]:
                         OUTPUT_FILES[hood]
                     )
 
-            # Delete temp folder
             shutil.rmtree(temp_dir)
 
     return partitions
@@ -126,7 +124,6 @@ def main() -> None:
         "driver": "org.postgresql.Driver",
     }
 
-    # FIXED: use the correct dataset filename
     csv_path = str(
         ROOT
         / os.getenv("DATASET_DIR", "dataset")
