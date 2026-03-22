@@ -44,9 +44,8 @@ PG_TABLES = {
 # -------------------------------------------------------------------
 
 def extract(spark: SparkSession, csv_path: str) -> DataFrame:
-    """Load CSV into DataFrame and preserve original row order."""
+    """Load CSV into DataFrame."""
     df = spark.read.csv(csv_path, header=True, inferSchema=True)
-    df = df.withColumn("_row", F.monotonically_increasing_id())
     return df
 
 # -------------------------------------------------------------------
@@ -64,10 +63,15 @@ def transform(df: DataFrame) -> dict[str, DataFrame]:
     for hood in NEIGHBORHOODS:
         hood_df = (
             df.filter(F.col("neighborhood") == hood)
-              .orderBy("_row")
+              .orderBy("house_id")
         )
 
-        hood_df = hood_df.drop("_row")
+        bool_cols = ["has_pool", "recently_renovated", "has_children", "first_time_buyer"]
+        for c in bool_cols:
+            hood_df = hood_df.withColumn(c, F.when(F.col(c), "True").when(~F.col(c), "False").otherwise(F.lit(None).cast("string")))
+        
+        hood_df = hood_df.withColumn("sale_date", F.date_format(F.to_date("sale_date", "M/d/yy"), "yyyy-MM-dd"))
+        
         partitions[hood] = hood_df
 
         if hood_df.limit(1).count() > 0:
